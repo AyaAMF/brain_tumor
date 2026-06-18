@@ -28,7 +28,7 @@ class Model(nn.Module):
 
 # ---------------- LOAD MODEL ----------------
 model = Model()
-model.load_state_dict(torch.load("model.pth", map_location=device))
+model.load_state_dict(torch.load("model.pth", map_location=device, weights_only=True))
 model.eval()
 
 # ---------------- IMAGE TRANSFORM ----------------
