@@ -1,9 +1,14 @@
+import sys
+import logging
 import torch
 import torch.nn as nn
 from PIL import Image, ImageTk
 import customtkinter as ctk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from torchvision import transforms
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 # ---------------- SETTINGS ----------------
 ctk.set_appearance_mode("dark")
@@ -27,9 +32,17 @@ class Model(nn.Module):
         return torch.sigmoid(self.fc(x))
 
 # ---------------- LOAD MODEL ----------------
-model = Model()
-model.load_state_dict(torch.load("model.pth", map_location=device))
-model.eval()
+MODEL_PATH = "model.pth"
+try:
+    model = Model()
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
+except FileNotFoundError:
+    logger.error("Model file not found: %s. Run train.py first.", MODEL_PATH)
+    sys.exit(1)
+except (RuntimeError, Exception) as exc:
+    logger.error("Failed to load model from %s: %s", MODEL_PATH, exc)
+    sys.exit(1)
 
 # ---------------- IMAGE TRANSFORM ----------------
 transform = transforms.Compose([
@@ -39,7 +52,11 @@ transform = transforms.Compose([
 
 # ---------------- PREDICTION ----------------
 def predict_image(path):
-    img = Image.open(path).convert("RGB")
+    try:
+        img = Image.open(path).convert("RGB")
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot open image: {exc}") from exc
+
     img_tensor = transform(img).unsqueeze(0)
 
     with torch.no_grad():
@@ -58,8 +75,10 @@ def upload_image():
         filetypes=[("Image Files", "*.png *.jpg *.jpeg")]
     )
 
-    if file_path:
-        # Display Image
+    if not file_path:
+        return
+
+    try:
         img = Image.open(file_path)
         img = img.resize((220, 220))
         photo = ImageTk.PhotoImage(img)
@@ -67,9 +86,20 @@ def upload_image():
         image_label.configure(image=photo, text="")
         image_label.image = photo
 
-        # Prediction
         result, color = predict_image(file_path)
         result_label.configure(text=result, text_color=color)
+    except (ValueError, OSError) as exc:
+        logger.error("Error processing image %s: %s", file_path, exc)
+        messagebox.showerror(
+            "Image Error",
+            f"Could not process the selected image:\n{exc}"
+        )
+    except Exception as exc:
+        logger.error("Unexpected error during prediction: %s", exc)
+        messagebox.showerror(
+            "Prediction Error",
+            f"An unexpected error occurred:\n{exc}"
+        )
 
 # ---------------- APP ----------------
 app = ctk.CTk()

@@ -1,4 +1,6 @@
 import os
+import sys
+import logging
 import torch
 import torch.nn as nn
 import numpy as np
@@ -7,6 +9,9 @@ from torchvision import transforms
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix
 import cv2
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,28 +29,56 @@ transform = transforms.Compose([
 
 # ---------- Load Dataset ----------
 def load_data(path):
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"Dataset directory not found: {path}")
+
     X, y = [], []
+    skipped = 0
     for label, folder in enumerate(['no', 'yes']):
         folder_path = os.path.join(path, folder)
+        if not os.path.isdir(folder_path):
+            raise FileNotFoundError(
+                f"Expected class folder not found: {folder_path}"
+            )
 
         for img_name in os.listdir(folder_path):
             img_path = os.path.join(folder_path, img_name)
 
             img = cv2.imread(img_path)
             if img is None:
+                logger.warning("Failed to read image, skipping: %s", img_path)
+                skipped += 1
                 continue
 
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = transform(img)
+            try:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = transform(img)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to process image %s: %s", img_path, exc
+                )
+                skipped += 1
+                continue
 
             X.append(img)
             y.append(label)
 
+    if skipped > 0:
+        logger.warning("Skipped %d unreadable/corrupt images", skipped)
+    if len(X) == 0:
+        raise RuntimeError(
+            f"No valid images found in {path}. Cannot proceed with training."
+        )
+
     return torch.stack(X), torch.tensor(y)
 
-print("Loading dataset...")
-X, y = load_data(DATA_PATH)
-print("Dataset Loaded ✔")
+try:
+    logger.info("Loading dataset...")
+    X, y = load_data(DATA_PATH)
+    logger.info("Dataset loaded: %d images", len(X))
+except (FileNotFoundError, RuntimeError) as exc:
+    logger.error("Dataset loading failed: %s", exc)
+    sys.exit(1)
 
 # ---------- Dataset Class ----------
 class BrainDataset(Dataset):
@@ -128,5 +161,9 @@ print("\n🎯 Accuracy:", acc)
 print("\n📊 Confusion Matrix:\n", cm)
 
 # ---------- Save Model ----------
-torch.save(model.state_dict(), "model.pth")
-print("\nModel Saved ✅")
+model_path = "model.pth"
+try:
+    torch.save(model.state_dict(), model_path)
+    logger.info("Model saved to %s", model_path)
+except OSError as exc:
+    logger.error("Failed to save model to %s: %s", model_path, exc)
